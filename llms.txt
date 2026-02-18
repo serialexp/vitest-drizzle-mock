@@ -1,0 +1,52 @@
+vitest-drizzle-mock intercepts drizzle-orm's query execution layer to let you mock database responses in tests without a real database connection.
+
+Setup: create a drizzle mock instance with `drizzle.mock({ schema })` (available on every driver), then pass it to `mockDatabase(db)` which returns a `MockController`. The controller is what you register mocks on and inspect calls with.
+
+Mock registration: call `mock.on(queryBuilder)` where queryBuilder is an actual drizzle query builder chain (e.g. `db.select().from(users).where(eq(users.id, 1))`). This extracts the SQL via `.toSQL()` internally. By default only the SQL string is matched, not the parameters — so `where(eq(users.id, 1))` matches any `where(eq(users.id, N))`. Chain `.withExactParams()` to also match params.
+
+Alternative matchers: `mock.onSql(/regex/)` matches against the generated SQL string with a regex. `mock.onSqlContaining("substring")` matches if the SQL contains the substring.
+
+Responses: `.respond(data)` returns static data. `.respondWith((sql, params) => data)` returns dynamic data (can be async). `.throw(new Error("msg"))` simulates a database error.
+
+`.once()` makes a mock expire after one match. Without it, mocks persist. When multiple mocks match, the last registered one wins. After a `.once()` mock is consumed, execution falls through to the next matching mock.
+
+Call recording: `mock.calls` is an array of `{ sql: string, params: unknown[], timestamp: number }` for every query that was executed. Use this for assertions like `expect(mock.calls).toHaveLength(2)`.
+
+Reset: `mock.reset()` clears mocks and calls. `mock.resetMocks()` clears only mocks. `mock.resetCalls()` clears only recorded calls.
+
+Transactions: mocks are shared between the db and transaction contexts. Register mocks on the parent `mock` controller, then use `db.transaction(async (tx) => { ... })` — queries inside `tx` hit the same mock handler. `tx.rollback()` works and returns undefined.
+
+Supported drivers: node-postgres, postgres.js, mysql2, better-sqlite3, libsql. All use `drizzle.mock()` — no real connection is created.
+
+Unmatched queries throw an error that includes the SQL, params, and a list of registered mocks for debugging.
+
+Typical test pattern:
+
+```ts
+import { drizzle } from "drizzle-orm/node-postgres";
+import { eq } from "drizzle-orm";
+import { mockDatabase } from "vitest-drizzle-mock";
+import * as schema from "./schema";
+
+const db = drizzle.mock({ schema });
+const mock = mockDatabase(db);
+
+// register
+mock.on(db.select().from(schema.users)).respond([{ id: 1, name: "Alice", email: "a@test.com" }]);
+mock.on(db.insert(schema.users).values({ name: "Bob", email: "b@test.com" }).returning()).respond([{ id: 2, name: "Bob", email: "b@test.com" }]);
+mock.on(db.update(schema.users).set({ name: "Updated" }).where(eq(schema.users.id, 1))).respond({ rowCount: 1 });
+mock.on(db.delete(schema.users).where(eq(schema.users.id, 1))).respond({ rowCount: 1 });
+mock.on(db.query.users.findMany({ with: { posts: true } })).respond([{ id: 1, name: "Alice", posts: [] }]);
+
+// execute
+const users = await db.select().from(schema.users);
+
+// assert
+expect(users).toEqual([{ id: 1, name: "Alice", email: "a@test.com" }]);
+expect(mock.calls).toHaveLength(1);
+
+// cleanup
+mock.reset();
+```
+
+Exports: `mockDatabase` (function), `MockController` (class), `MockBuilder` (class), and types `RecordedCall`, `MockEntry`, `MockMatcher`, `MockResponse`.
