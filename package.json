@@ -1,0 +1,49 @@
+{
+  "name": "vitest-drizzle-mock",
+  "version": "0.1.0",
+  "description": "Mock drizzle-orm database instances for fast, in-memory unit testing with vitest",
+  "type": "module",
+  "license": "MIT",
+  "repository": "https://github.com/serialexp/vitest-drizzle-mock",
+  "keywords": [
+    "drizzle",
+    "drizzle-orm",
+    "mock",
+    "vitest",
+    "testing",
+    "unit-test",
+    "database"
+  ],
+  "files": [
+    "dist"
+  ],
+  "exports": {
+    ".": {
+      "import": "./dist/index.js",
+      "types": "./dist/index.d.ts"
+    }
+  },
+  "scripts": {
+    "build": "tsup src/index.ts --format esm --dts",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "typecheck": "tsc --noEmit"
+  },
+  "peerDependencies": {
+    "drizzle-orm": ">=0.36.0"
+  },
+  "devDependencies": {
+    "@libsql/client": "^0.17.0",
+    "@types/better-sqlite3": "^7.6.13",
+    "@types/pg": "^8.16.0",
+    "better-sqlite3": "^12.6.2",
+    "drizzle-orm": "^0.38.0",
+    "just-release": "^0.8.2",
+    "mysql2": "^3.17.2",
+    "pg": "^8.18.0",
+    "postgres": "^3.4.8",
+    "tsup": "^8.0.0",
+    "typescript": "^5.7.0",
+    "vitest": "^3.0.0"
+  }
+}

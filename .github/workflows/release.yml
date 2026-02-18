@@ -1,0 +1,37 @@
+name: Release
+
+on:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    # Skip if this is a release commit (squash merge) or merge of a release branch (regular merge)
+    if: >-
+      !startsWith(github.event.head_commit.message, 'release:') &&
+      !(startsWith(github.event.head_commit.message, 'Merge') && contains(github.event.head_commit.message, 'release/'))
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # Required to get all commits
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 'lts/*'
+          cache: 'pnpm'
+
+      - run: pnpm install
+
+      - name: Create release PR
+        env:
+          CI: 1
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: pnpm just-release
