@@ -2,7 +2,7 @@
 // ABOUTME: Supports both SQL-based matching (via query builders) and structural matching (via callbacks).
 
 import { MockHandler, normalizeSql } from "./mock-handler.js";
-import type { MockHandle, MockMatcher, RecordedCall } from "./types.js";
+import type { MockHandle, MockMatcher, RecordedCall, SqlFragment } from "./types.js";
 
 export function createMockHandle(): MockHandle {
   const handle = Object.assign(function () {}, {
@@ -41,8 +41,20 @@ const operationByEntityKind: Record<string, string> = {
   SQLiteSelectQueryBuilder: "select",
 };
 
+const relationalEntityKinds = new Set([
+  "PgRelationalQuery",
+  "MySqlRelationalQuery",
+  "SQLiteAsyncRelationalQuery",
+  "SQLiteSyncRelationalQuery",
+]);
+
 function extractStructuralMatcher(queryBuilder: any): MockMatcher {
   const entityKind = queryBuilder.constructor[EntityKind] ?? queryBuilder[EntityKind];
+
+  if (relationalEntityKinds.has(entityKind)) {
+    return extractRelationalMatcher(queryBuilder);
+  }
+
   const operation = entityKind ? operationByEntityKind[entityKind] : undefined;
 
   if (!operation) {
@@ -81,8 +93,31 @@ function extractStructuralMatcher(queryBuilder: any): MockMatcher {
   };
 }
 
+function extractRelationalMatcher(queryBuilder: any): MockMatcher {
+  const table = queryBuilder.table;
+
+  if (!table) {
+    throw new Error(
+      `Cannot extract structural matcher: no table found on relational query builder.`
+    );
+  }
+
+  const operation = queryBuilder.mode === "first" ? "findFirst" : "findMany";
+
+  return {
+    type: "structural",
+    operation,
+    tableName: table[TableName],
+    tableSchema: table[TableSchema],
+  };
+}
+
 export class MockController<TDb = any> {
-  constructor(private handler: MockHandler, private db: TDb) {}
+  private dialect: any;
+
+  constructor(private handler: MockHandler, private db: TDb) {
+    this.dialect = (db as any).dialect;
+  }
 
   get calls(): RecordedCall[] {
     return this.handler.calls;
@@ -94,7 +129,7 @@ export class MockController<TDb = any> {
     if (typeof queryBuilderOrCallback === "function") {
       const queryBuilder = queryBuilderOrCallback(this.db);
       const matcher = extractStructuralMatcher(queryBuilder);
-      return new MockBuilder(this.handler, matcher);
+      return new MockBuilder(this.handler, matcher, this.dialect);
     }
 
     const { sql, params } = queryBuilderOrCallback.toSQL();
@@ -102,21 +137,21 @@ export class MockController<TDb = any> {
       type: "sql-exact",
       sql: normalizeSql(sql),
       params,
-    });
+    }, this.dialect);
   }
 
   onSql(pattern: RegExp): MockBuilder {
     return new MockBuilder(this.handler, {
       type: "sql-pattern",
       pattern,
-    });
+    }, this.dialect);
   }
 
   onSqlContaining(substring: string): MockBuilder {
     return new MockBuilder(this.handler, {
       type: "sql-contains",
       substring,
-    });
+    }, this.dialect);
   }
 
   reset(): void {
@@ -132,14 +167,33 @@ export class MockController<TDb = any> {
   }
 }
 
+// Strip table/alias prefixes: "table"."col" → "col"
+function stripTablePrefixes(sql: string): string {
+  return sql.replace(/"[^"]+"\."([^"]+)"/g, '"$1"');
+}
+
+// Replace positional params ($1, $2, etc.) with ?
+function normalizeParamPlaceholders(sql: string): string {
+  return sql.replace(/\$\d+/g, "?");
+}
+
+function serializeSqlFragment(dialect: any, expr: any): SqlFragment {
+  const sqlObj = typeof expr.getSQL === "function" ? expr.getSQL() : expr;
+  const { sql, params } = dialect.sqlToQuery(sqlObj);
+  const normalizedSql = normalizeParamPlaceholders(stripTablePrefixes(sql));
+  return { normalizedSql, params };
+}
+
 export class MockBuilder {
   private matchParams = false;
   private isOnce = false;
   private isPartial = false;
+  private fragments: SqlFragment[] = [];
 
   constructor(
     private handler: MockHandler,
-    private matcher: MockMatcher
+    private matcher: MockMatcher,
+    private dialect: any,
   ) {}
 
   partial(): this {
@@ -158,6 +212,14 @@ export class MockBuilder {
       throw new Error(".withExactParams() cannot be used with structural matchers (callback-based .on())");
     }
     this.matchParams = true;
+    return this;
+  }
+
+  containingSql(expr: any): this {
+    if (this.matcher.type !== "structural") {
+      throw new Error(".containingSql() can only be used with structural matchers (callback-based .on())");
+    }
+    this.fragments.push(serializeSqlFragment(this.dialect, expr));
     return this;
   }
 
@@ -208,6 +270,9 @@ export class MockBuilder {
 
   private buildMatcher(): MockMatcher {
     if (this.matcher.type === "structural") {
+      if (this.fragments.length > 0) {
+        return { ...this.matcher, sqlFragments: this.fragments };
+      }
       return this.matcher;
     }
     if (this.matcher.type === "sql-exact") {

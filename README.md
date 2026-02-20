@@ -36,12 +36,12 @@ const users = await db.select().from(schema.users);
 import { describe, it, expect, beforeEach } from "vitest";
 import { eq } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/node-postgres";
-import { mockDatabase } from "vitest-drizzle-mock";
+import { mockDatabase, MockController } from "vitest-drizzle-mock";
 import * as schema from "./schema";
 
 describe("user service", () => {
   let db: ReturnType<typeof drizzle.mock<typeof schema>>;
-  let mock: ReturnType<typeof mockDatabase>;
+  let mock: MockController<typeof db>;
 
   beforeEach(() => {
     db = drizzle.mock({ schema });
@@ -153,6 +153,103 @@ mock
   .on(db.query.users.findMany({ with: { posts: true } }))
   .respond([{ id: 1, name: "Alice", posts: [{ id: 1, title: "Hello" }] }]);
 ```
+
+#### `mock.on(callback)`
+
+Match queries structurally by operation type, table, and column keys — without comparing SQL strings. This is useful when drizzle generates complex SQL expressions (like `jsonb_set(COALESCE(...))`) that differ from what a simple `.set()` produces.
+
+The callback receives the database instance with full type safety.
+
+```ts
+import { anything } from "vitest-drizzle-mock";
+
+// Match any update on the users table that sets the "name" column
+mock
+  .on(db => db.update(schema.users).set({ name: anything() }))
+  .respond({ rowCount: 1 });
+
+// Matches regardless of WHERE clause, param values, or SQL complexity
+await db.update(schema.users).set({ name: "Alice" }).where(eq(schema.users.id, 1));
+await db.update(schema.users).set({ name: sql`upper(${schema.users.name})` });
+```
+
+Works with all query types:
+
+```ts
+// Insert — matches any insert with these columns
+mock
+  .on(db => db.insert(schema.users).values({ name: anything(), email: anything() }))
+  .respond({ rowCount: 1 });
+
+// Delete — matches any delete on the table (no column keys needed)
+mock
+  .on(db => db.delete(schema.users))
+  .respond({ rowCount: 1 });
+
+// Select — matches any select from the table
+mock
+  .on(db => db.select().from(schema.users))
+  .respond([{ id: 1, name: "Alice" }]);
+
+// Relational queries — findFirst and findMany
+mock
+  .on(db => db.query.users.findFirst())
+  .respond({ id: 1, name: "Alice" });
+
+mock
+  .on(db => db.query.users.findMany())
+  .respond([{ id: 1, name: "Alice" }]);
+```
+
+Column key matching uses subset logic: if the mock specifies `{name}`, it matches actual queries that set `{name}` or `{name, email}`. But a mock specifying `{name, email}` won't match a query that only sets `{name}`.
+
+#### `anything()`
+
+A typed wildcard placeholder for use inside structural matching callbacks. Returns a value that satisfies any column type, so you don't need type casts.
+
+```ts
+import { anything } from "vitest-drizzle-mock";
+
+mock
+  .on(db => db.update(schema.users).set({
+    name: anything(),
+    email: anything(),
+  }))
+  .respond({ rowCount: 1 });
+```
+
+#### `.containingSql(expr)`
+
+Combine structural matching with a SQL fragment check. The expression is serialized and the actual query's SQL is checked for the fragment with positional param matching. This lets you match on specific conditions without copying the entire WHERE clause.
+
+```ts
+// Match any findFirst on the table where userId = 1, regardless of other conditions
+mock
+  .on(db => db.query.accessLog.findFirst())
+  .containingSql(eq(schema.accessLog.userId, 1))
+  .respond({ id: 1, userId: 1, logoutAt: null });
+
+// The sql`logoutAt is null` part is ignored — only the userId condition matters
+await db.query.accessLog.findFirst({
+  where: and(eq(schema.accessLog.userId, 1), sql`${schema.accessLog.logoutAt} is null`),
+});
+```
+
+Can also distinguish between different param values:
+
+```ts
+mock
+  .on(db => db.query.users.findFirst())
+  .containingSql(eq(schema.users.id, 1))
+  .respond({ id: 1, name: "Alice" });
+
+mock
+  .on(db => db.query.users.findFirst())
+  .containingSql(eq(schema.users.id, 2))
+  .respond({ id: 2, name: "Bob" });
+```
+
+Only works with structural matchers (callback-based `.on()`).
 
 #### `mock.onSql(pattern)`
 
@@ -361,7 +458,7 @@ All drivers use drizzle's built-in `.mock()` constructor — no real database co
 
 ## How It Works
 
-`mockDatabase()` intercepts the `prepareQuery` method on the drizzle session. When a query is executed, the generated SQL is matched against registered mocks. If no mock matches, an error is thrown with the SQL and a list of registered mocks to help you debug.
+`mockDatabase()` intercepts the `prepareQuery` method on the drizzle session and wraps dialect build methods to capture query configs. When a query is executed, it is matched against registered mocks using either SQL string comparison or structural config comparison. If no mock matches, an error is thrown with the SQL and a list of registered mocks to help you debug.
 
 ### Match Resolution
 
@@ -373,7 +470,10 @@ When multiple mocks match a query, the most specific one wins:
 | 2 | `.on(query)` | Exact SQL, any params |
 | 3 | `.on(query).partial().withExactParams()` | SQL prefix + exact params |
 | 4 | `.on(query).partial()` | SQL prefix, any params |
-| 5 (lowest) | `.onSql()` / `.onSqlContaining()` | Regex or substring |
+| 5 | `.on(cb).containingSql()` | Structural + SQL fragment |
+| 6 | `.on(cb)` with column keys | Structural with column keys |
+| 7 | `.on(cb)` without column keys | Structural (table + operation only) |
+| 8 (lowest) | `.onSql()` / `.onSqlContaining()` | Regex or substring |
 
 Within the same priority level, the last registered mock wins. This means you can set up broad catch-alls and specific overrides in any order:
 

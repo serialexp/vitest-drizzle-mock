@@ -9,7 +9,12 @@ export type MockMatcher =
   | { type: "sql-starts-with"; sql: string; params?: unknown[] }
   | { type: "sql-pattern"; pattern: RegExp; params?: unknown[] }
   | { type: "sql-contains"; substring: string; params?: unknown[] }
-  | { type: "structural"; operation: string; tableName: string; tableSchema: string | undefined; columnKeys?: string[] };
+  | { type: "structural"; operation: string; tableName: string; tableSchema: string | undefined; columnKeys?: string[]; sqlFragments?: SqlFragment[] };
+
+export interface SqlFragment {
+  normalizedSql: string;
+  params: unknown[];
+}
 
 export interface CapturedConfig {
   operation: string;

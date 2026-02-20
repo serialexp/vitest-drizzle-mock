@@ -104,22 +104,72 @@ export function mockDatabase<TDb>(db: TDb): MockController<TDb> {
 
   // Capture the config from dialect build methods (synchronous, no race condition)
   let lastCapturedConfig: CapturedConfig | undefined;
+  let lastRelationalMode: string | undefined;
+  let insideRelationalBuild = false;
 
   for (const [method, operation] of Object.entries(operationByBuildMethod)) {
     if (typeof dialect[method] === "function") {
       const original = dialect[method].bind(dialect);
       dialect[method] = (config: any) => {
-        const table = config.table;
-        if (table) {
-          lastCapturedConfig = {
-            operation,
-            tableName: table[TableName],
-            tableSchema: table[TableSchema],
-            columnKeys: extractColumnKeys(operation, config),
-          };
+        // buildRelationalQueryWithoutPK calls buildSelectQuery internally — don't overwrite
+        if (!insideRelationalBuild) {
+          const table = config.table;
+          if (table) {
+            lastCapturedConfig = {
+              operation,
+              tableName: table[TableName],
+              tableSchema: table[TableSchema],
+              columnKeys: extractColumnKeys(operation, config),
+            };
+          }
         }
         return original(config);
       };
+    }
+  }
+
+  // Wrap buildRelationalQueryWithoutPK for relational query structural matching
+  if (typeof dialect.buildRelationalQueryWithoutPK === "function") {
+    const original = dialect.buildRelationalQueryWithoutPK.bind(dialect);
+    dialect.buildRelationalQueryWithoutPK = (config: any) => {
+      const table = config.table;
+      if (table) {
+        const mode = lastRelationalMode;
+        lastRelationalMode = undefined;
+        lastCapturedConfig = {
+          operation: mode === "first" ? "findFirst" : "findMany",
+          tableName: table[TableName],
+          tableSchema: table[TableSchema],
+          columnKeys: [],
+        };
+      }
+      insideRelationalBuild = true;
+      try {
+        return original(config);
+      } finally {
+        insideRelationalBuild = false;
+      }
+    };
+  }
+
+  // Wrap findFirst/findMany on relational query builders to capture mode
+  if (dbAny.query) {
+    for (const key of Object.keys(dbAny.query)) {
+      const builder = dbAny.query[key];
+      if (typeof builder?.findFirst === "function") {
+        const origFirst = builder.findFirst.bind(builder);
+        builder.findFirst = (config?: any) => {
+          lastRelationalMode = "first";
+          return origFirst(config);
+        };
+      }
+      if (typeof builder?.findMany === "function") {
+        const origMany = builder.findMany.bind(builder);
+        builder.findMany = (config?: any) => {
+          lastRelationalMode = "many";
+          return origMany(config);
+        };
+      }
     }
   }
 

@@ -2,7 +2,7 @@
 // ABOUTME: Verifies matching by operation type, table, and column keys without SQL comparison
 
 import { describe, it, expect, beforeEach } from "vitest";
-import { eq } from "drizzle-orm";
+import { eq, and } from "drizzle-orm";
 import { anything } from "../src/index.js";
 import { createTestDb } from "./helpers.js";
 import * as schema from "./schema.js";
@@ -232,6 +232,148 @@ describe("structural matching", () => {
         .where(eq(schema.users.id, 2));
 
       expect(handle.mock.calls).toHaveLength(2);
+    });
+  });
+
+  describe("relational queries", () => {
+    it("should match findFirst with any where clause", async () => {
+      mock
+        .on((d) => d.query.users.findFirst({ where: anything() }))
+        .respond({ id: 1, name: "Alice", email: "a@test.com", createdAt: null });
+
+      const result = await db.query.users.findFirst({
+        where: eq(schema.users.id, 42),
+      });
+
+      expect(result).toEqual({ id: 1, name: "Alice", email: "a@test.com", createdAt: null });
+    });
+
+    it("should match findMany with any where clause", async () => {
+      mock
+        .on((d) => d.query.users.findMany({ where: anything() }))
+        .respond([{ id: 1, name: "Alice", email: "a@test.com", createdAt: null }]);
+
+      const result = await db.query.users.findMany({
+        where: eq(schema.users.id, 1),
+      });
+
+      expect(result).toEqual([{ id: 1, name: "Alice", email: "a@test.com", createdAt: null }]);
+    });
+
+    it("should match findFirst without options", async () => {
+      mock
+        .on((d) => d.query.users.findFirst())
+        .respond({ id: 1, name: "Alice", email: "a@test.com", createdAt: null });
+
+      const result = await db.query.users.findFirst({
+        where: eq(schema.users.id, 99),
+      });
+
+      expect(result).toEqual({ id: 1, name: "Alice", email: "a@test.com", createdAt: null });
+    });
+
+    it("should not match findFirst when table is different", async () => {
+      mock
+        .on((d) => d.query.posts.findFirst())
+        .respond({ id: 1, title: "Hello", body: "World", authorId: 1 });
+
+      await expect(
+        db.query.users.findFirst()
+      ).rejects.toThrow(/No mock registered/);
+    });
+
+    it("should not match findMany against findFirst", async () => {
+      mock
+        .on((d) => d.query.users.findMany())
+        .respond([{ id: 1, name: "Alice", email: "a@test.com", createdAt: null }]);
+
+      await expect(
+        db.query.users.findFirst()
+      ).rejects.toThrow(/No mock registered/);
+    });
+
+    it("should not match findFirst against findMany", async () => {
+      mock
+        .on((d) => d.query.users.findFirst())
+        .respond({ id: 1, name: "Alice", email: "a@test.com", createdAt: null });
+
+      await expect(
+        db.query.users.findMany()
+      ).rejects.toThrow(/No mock registered/);
+    });
+  });
+
+  describe("containingSql", () => {
+    it("should match when SQL fragment is present in the query", async () => {
+      mock
+        .on((d) => d.query.users.findFirst())
+        .containingSql(eq(schema.users.id, 1))
+        .respond({ id: 1, name: "Alice", email: "a@test.com", createdAt: null });
+
+      const result = await db.query.users.findFirst({
+        where: eq(schema.users.id, 1),
+      });
+
+      expect(result).toEqual({ id: 1, name: "Alice", email: "a@test.com", createdAt: null });
+    });
+
+    it("should not match when SQL fragment param value differs", async () => {
+      mock
+        .on((d) => d.query.users.findFirst())
+        .containingSql(eq(schema.users.id, 1))
+        .respond({ id: 1, name: "Alice", email: "a@test.com", createdAt: null });
+
+      await expect(
+        db.query.users.findFirst({ where: eq(schema.users.id, 999) })
+      ).rejects.toThrow(/No mock registered/);
+    });
+
+    it("should match fragment in a compound where clause", async () => {
+      mock
+        .on((d) => d.query.users.findFirst())
+        .containingSql(eq(schema.users.id, 42))
+        .respond({ id: 42, name: "Bob", email: "b@test.com", createdAt: null });
+
+      const result = await db.query.users.findFirst({
+        where: and(
+          eq(schema.users.id, 42),
+          eq(schema.users.name, "Bob"),
+        ),
+      });
+
+      expect(result).toEqual({ id: 42, name: "Bob", email: "b@test.com", createdAt: null });
+    });
+
+    it("should distinguish different param values with same structure", async () => {
+      mock
+        .on((d) => d.query.users.findFirst())
+        .containingSql(eq(schema.users.id, 1))
+        .respond({ id: 1, name: "Alice", email: "a@test.com", createdAt: null });
+
+      mock
+        .on((d) => d.query.users.findFirst())
+        .containingSql(eq(schema.users.id, 2))
+        .respond({ id: 2, name: "Bob", email: "b@test.com", createdAt: null });
+
+      const alice = await db.query.users.findFirst({ where: eq(schema.users.id, 1) });
+      expect(alice).toEqual({ id: 1, name: "Alice", email: "a@test.com", createdAt: null });
+
+      const bob = await db.query.users.findFirst({ where: eq(schema.users.id, 2) });
+      expect(bob).toEqual({ id: 2, name: "Bob", email: "b@test.com", createdAt: null });
+    });
+
+    it("should work with standard select queries too", async () => {
+      mock
+        .on((d) => d.select().from(schema.users))
+        .containingSql(eq(schema.users.id, 5))
+        .respond([{ id: 5, name: "Eve" }]);
+
+      const result = await db
+        .select()
+        .from(schema.users)
+        .where(eq(schema.users.id, 5));
+
+      expect(result).toEqual([{ id: 5, name: "Eve" }]);
     });
   });
 

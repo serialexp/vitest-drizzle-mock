@@ -1,4 +1,4 @@
-import type { CapturedConfig, MockEntry, MockMatcher, RecordedCall } from "./types.js";
+import type { CapturedConfig, MockEntry, MockMatcher, RecordedCall, SqlFragment } from "./types.js";
 
 export class MockHandler {
   private mocks: MockEntry[] = [];
@@ -101,6 +101,11 @@ export class MockHandler {
             if (!capturedConfig.columnKeys.includes(key)) return false;
           }
         }
+        if (matcher.sqlFragments) {
+          for (const fragment of matcher.sqlFragments) {
+            if (!sqlFragmentMatches(fragment, sql, params)) return false;
+          }
+        }
         return true;
       }
     }
@@ -143,6 +148,37 @@ function paramsEqual(a: unknown[], b: unknown[]): boolean {
   return true;
 }
 
+// Strip table/alias prefixes: "table"."col" → "col"
+function stripTablePrefixes(sql: string): string {
+  return sql.replace(/"[^"]+"\."([^"]+)"/g, '"$1"');
+}
+
+// Replace positional params ($1, $2, etc.) with ?
+function normalizeParams(sql: string): string {
+  return sql.replace(/\$\d+/g, "?");
+}
+
+function sqlFragmentMatches(fragment: SqlFragment, actualSql: string, actualParams: unknown[]): boolean {
+  const normalizedActual = normalizeParams(stripTablePrefixes(actualSql));
+  const normalizedFragment = fragment.normalizedSql;
+
+  const matchIndex = normalizedActual.indexOf(normalizedFragment);
+  if (matchIndex === -1) return false;
+
+  if (fragment.params.length === 0) return true;
+
+  // Count ? placeholders before the match to find the param offset
+  const beforeMatch = normalizedActual.slice(0, matchIndex);
+  const paramOffset = (beforeMatch.match(/\?/g) || []).length;
+
+  // Check that actual params at the right positions match fragment params
+  for (let i = 0; i < fragment.params.length; i++) {
+    if (actualParams[paramOffset + i] !== fragment.params[i]) return false;
+  }
+
+  return true;
+}
+
 function matcherSpecificity(matcher: MockMatcher): number {
   switch (matcher.type) {
     case "sql-exact":
@@ -150,6 +186,7 @@ function matcherSpecificity(matcher: MockMatcher): number {
     case "sql-starts-with":
       return matcher.params !== undefined ? 3 : 2;
     case "structural":
+      if (matcher.sqlFragments) return 1.75;
       return matcher.columnKeys ? 1.5 : 1.25;
     case "sql-pattern":
     case "sql-contains":
