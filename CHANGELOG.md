@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.3.0 (2026-02-20)
+
+### Features
+
+- return spy-compatible handles from mock registration
+
 ## 0.2.1 (2026-02-20)
 
 ### Bug Fixes
