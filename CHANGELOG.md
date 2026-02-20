@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.2.1 (2026-02-20)
+
+### Bug Fixes
+
+- add top-level main/types fields for older moduleResolution
+
+### Documentation
+
+- add partial matching, match resolution, and more usage examples
+
 ## 0.2.0 (2026-02-20)
 
 ### Features
