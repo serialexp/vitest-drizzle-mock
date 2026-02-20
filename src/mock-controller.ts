@@ -51,11 +51,20 @@ export class MockController {
 export class MockBuilder {
   private matchParams = false;
   private isOnce = false;
+  private isPartial = false;
 
   constructor(
     private handler: MockHandler,
     private matcher: MockMatcher
   ) {}
+
+  partial(): this {
+    if (this.matcher.type !== "sql-exact") {
+      throw new Error(".partial() can only be used with .on() (exact SQL matchers)");
+    }
+    this.isPartial = true;
+    return this;
+  }
 
   withExactParams(): this {
     this.matchParams = true;
@@ -99,8 +108,12 @@ export class MockBuilder {
   }
 
   private buildMatcher(): MockMatcher {
-    if (!this.matchParams && this.matcher.type === "sql-exact") {
-      return { type: "sql-exact", sql: this.matcher.sql };
+    if (this.matcher.type === "sql-exact") {
+      const type = this.isPartial ? "sql-starts-with" as const : "sql-exact" as const;
+      if (this.matchParams) {
+        return { type, sql: this.matcher.sql, params: this.matcher.params };
+      }
+      return { type, sql: this.matcher.sql };
     }
     return this.matcher;
   }

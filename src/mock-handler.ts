@@ -21,14 +21,24 @@ export class MockHandler {
       timestamp: Date.now(),
     });
 
+    let bestMatch: { mock: MockEntry; specificity: number; index: number } | undefined;
+
     for (let i = this.mocks.length - 1; i >= 0; i--) {
       const mock = this.mocks[i];
       if (mock.consumed) continue;
       if (this.matches(mock.matcher, normalizedSql, params)) {
-        if (mock.once) mock.consumed = true;
-        if (mock.error) throw mock.error;
-        return this.resolveResponse(mock, normalizedSql, params);
+        const specificity = matcherSpecificity(mock.matcher);
+        if (!bestMatch || specificity > bestMatch.specificity) {
+          bestMatch = { mock, specificity, index: i };
+        }
       }
+    }
+
+    if (bestMatch) {
+      const { mock } = bestMatch;
+      if (mock.once) mock.consumed = true;
+      if (mock.error) throw mock.error;
+      return this.resolveResponse(mock, normalizedSql, params);
     }
 
     const registered =
@@ -50,6 +60,14 @@ export class MockHandler {
       case "sql-exact": {
         const sqlMatch = normalizeSql(matcher.sql) === sql;
         if (!sqlMatch) return false;
+        if (matcher.params !== undefined) {
+          return paramsEqual(matcher.params, params);
+        }
+        return true;
+      }
+      case "sql-starts-with": {
+        const prefixMatch = sql.startsWith(normalizeSql(matcher.sql));
+        if (!prefixMatch) return false;
         if (matcher.params !== undefined) {
           return paramsEqual(matcher.params, params);
         }
@@ -111,10 +129,24 @@ function paramsEqual(a: unknown[], b: unknown[]): boolean {
   return true;
 }
 
+function matcherSpecificity(matcher: MockMatcher): number {
+  switch (matcher.type) {
+    case "sql-exact":
+      return matcher.params !== undefined ? 5 : 4;
+    case "sql-starts-with":
+      return matcher.params !== undefined ? 3 : 2;
+    case "sql-pattern":
+    case "sql-contains":
+      return 1;
+  }
+}
+
 function formatMatcher(matcher: MockMatcher): string {
   switch (matcher.type) {
     case "sql-exact":
       return `exact: "${matcher.sql}"${matcher.params ? ` params: ${JSON.stringify(matcher.params)}` : ""}`;
+    case "sql-starts-with":
+      return `partial: "${matcher.sql}"${matcher.params ? ` params: ${JSON.stringify(matcher.params)}` : ""}`;
     case "sql-pattern":
       return `pattern: ${matcher.pattern}`;
     case "sql-contains":

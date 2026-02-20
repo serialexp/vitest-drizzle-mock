@@ -75,7 +75,192 @@ describe("mock matching", () => {
     });
   });
 
-  describe("mock priority", () => {
+  describe("partial matching", () => {
+    it("should match queries with extra clauses when using .partial()", async () => {
+      mock
+        .on(db.select().from(schema.users))
+        .partial()
+        .respond([{ id: 1, name: "Alice" }]);
+
+      // Query with where clause should match the partial mock
+      const result = await db
+        .select()
+        .from(schema.users)
+        .where(eq(schema.users.id, 1));
+
+      expect(result).toEqual([{ id: 1, name: "Alice" }]);
+    });
+
+    it("should match the base query too", async () => {
+      mock
+        .on(db.select().from(schema.users))
+        .partial()
+        .respond([{ id: 1, name: "Alice" }]);
+
+      const result = await db.select().from(schema.users);
+      expect(result).toEqual([{ id: 1, name: "Alice" }]);
+    });
+
+    it("should not match unrelated queries", async () => {
+      mock
+        .on(db.select().from(schema.users))
+        .partial()
+        .respond([{ id: 1, name: "Alice" }]);
+
+      await expect(db.select().from(schema.posts)).rejects.toThrow(
+        /No mock registered/
+      );
+    });
+
+    it("should support .withExactParams() on partial matches", async () => {
+      mock
+        .on(db.select().from(schema.users).where(eq(schema.users.id, 1)))
+        .partial()
+        .withExactParams()
+        .respond([{ id: 1, name: "Alice" }]);
+
+      // Same SQL prefix + same params → match
+      const result = await db
+        .select()
+        .from(schema.users)
+        .where(eq(schema.users.id, 1));
+      expect(result).toEqual([{ id: 1, name: "Alice" }]);
+
+      // Same SQL prefix + different params → no match
+      await expect(
+        db.select().from(schema.users).where(eq(schema.users.id, 999))
+      ).rejects.toThrow(/No mock registered/);
+    });
+  });
+
+  describe("specificity-based priority", () => {
+    it("exact+params wins over exact without params", async () => {
+      mock
+        .on(db.select().from(schema.users).where(eq(schema.users.id, 1)))
+        .respond([{ name: "Any params" }]);
+
+      mock
+        .on(db.select().from(schema.users).where(eq(schema.users.id, 1)))
+        .withExactParams()
+        .respond([{ name: "Exact params" }]);
+
+      const result = await db
+        .select()
+        .from(schema.users)
+        .where(eq(schema.users.id, 1));
+
+      expect(result).toEqual([{ name: "Exact params" }]);
+    });
+
+    it("exact wins over partial", async () => {
+      mock
+        .on(db.select().from(schema.users))
+        .partial()
+        .respond([{ name: "Partial" }]);
+
+      mock
+        .on(db.select().from(schema.users).where(eq(schema.users.id, 1)))
+        .respond([{ name: "Exact" }]);
+
+      const result = await db
+        .select()
+        .from(schema.users)
+        .where(eq(schema.users.id, 1));
+
+      expect(result).toEqual([{ name: "Exact" }]);
+    });
+
+    it("exact wins over partial regardless of registration order", async () => {
+      // Register exact FIRST, partial SECOND
+      mock
+        .on(db.select().from(schema.users).where(eq(schema.users.id, 1)))
+        .respond([{ name: "Exact" }]);
+
+      mock
+        .on(db.select().from(schema.users))
+        .partial()
+        .respond([{ name: "Partial" }]);
+
+      const result = await db
+        .select()
+        .from(schema.users)
+        .where(eq(schema.users.id, 1));
+
+      expect(result).toEqual([{ name: "Exact" }]);
+    });
+
+    it("partial wins over regex/contains", async () => {
+      mock.onSql(/from "users"/).respond([{ name: "Regex" }]);
+
+      mock
+        .on(db.select().from(schema.users))
+        .partial()
+        .respond([{ name: "Partial" }]);
+
+      const result = await db
+        .select()
+        .from(schema.users)
+        .where(eq(schema.users.id, 1));
+
+      expect(result).toEqual([{ name: "Partial" }]);
+    });
+
+    it("partial wins over regex regardless of registration order", async () => {
+      mock
+        .on(db.select().from(schema.users))
+        .partial()
+        .respond([{ name: "Partial" }]);
+
+      mock.onSql(/from "users"/).respond([{ name: "Regex" }]);
+
+      const result = await db
+        .select()
+        .from(schema.users)
+        .where(eq(schema.users.id, 1));
+
+      expect(result).toEqual([{ name: "Partial" }]);
+    });
+
+    it("within same specificity, last-registered wins", async () => {
+      mock.onSql(/from "users"/).respond([{ name: "First regex" }]);
+      mock.onSql(/from "users"/).respond([{ name: "Second regex" }]);
+
+      const result = await db.select().from(schema.users);
+      expect(result).toEqual([{ name: "Second regex" }]);
+    });
+
+    it("partial match falls through when exact match doesn't apply", async () => {
+      mock
+        .on(db.select().from(schema.users))
+        .partial()
+        .respond([{ name: "Catch-all" }]);
+
+      mock
+        .on(db.select().from(schema.users).where(eq(schema.users.id, 1)))
+        .withExactParams()
+        .respond([{ name: "Specific" }]);
+
+      // Exact mock matches id=1
+      const specific = await db
+        .select()
+        .from(schema.users)
+        .where(eq(schema.users.id, 1));
+      expect(specific).toEqual([{ name: "Specific" }]);
+
+      // Partial mock catches other where clauses
+      const other = await db
+        .select()
+        .from(schema.users)
+        .where(eq(schema.users.id, 999));
+      expect(other).toEqual([{ name: "Catch-all" }]);
+
+      // Partial mock catches the base query too
+      const base = await db.select().from(schema.users);
+      expect(base).toEqual([{ name: "Catch-all" }]);
+    });
+  });
+
+  describe("mock priority (legacy)", () => {
     it("should use the last registered mock (most specific wins)", async () => {
       mock.on(db.select().from(schema.users)).respond([{ name: "General" }]);
       mock

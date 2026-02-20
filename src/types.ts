@@ -6,6 +6,7 @@ export interface RecordedCall {
 
 export type MockMatcher =
   | { type: "sql-exact"; sql: string; params?: unknown[] }
+  | { type: "sql-starts-with"; sql: string; params?: unknown[] }
   | { type: "sql-pattern"; pattern: RegExp; params?: unknown[] }
   | { type: "sql-contains"; substring: string; params?: unknown[] };
 
