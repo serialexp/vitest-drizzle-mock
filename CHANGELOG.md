@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.6.0 (2026-02-20)
+
+### Features
+
+- add typed convenience methods for table-based mock registration
+
 ## 0.5.0 (2026-02-20)
 
 ### Features
