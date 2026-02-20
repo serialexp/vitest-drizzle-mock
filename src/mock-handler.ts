@@ -36,6 +36,7 @@ export class MockHandler {
 
     if (bestMatch) {
       const { mock } = bestMatch;
+      mock.handle.mock.calls.push([normalizedSql, params]);
       if (mock.once) mock.consumed = true;
       if (mock.error) throw mock.error;
       return this.resolveResponse(mock, normalizedSql, params);

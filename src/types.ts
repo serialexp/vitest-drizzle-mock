@@ -14,10 +14,17 @@ export type MockResponse =
   | { type: "data"; data: unknown }
   | { type: "function"; fn: (sql: string, params: unknown[]) => unknown };
 
+export interface MockHandle {
+  mock: {
+    calls: [sql: string, params: unknown[]][];
+  };
+}
+
 export interface MockEntry {
   matcher: MockMatcher;
   response: MockResponse;
   error?: Error;
   once: boolean;
   consumed: boolean;
+  handle: MockHandle;
 }

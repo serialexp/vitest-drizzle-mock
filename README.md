@@ -266,9 +266,41 @@ await db.select().from(schema.users); // → [{ name: "Once" }]
 await db.select().from(schema.users); // → [{ name: "Persistent" }]
 ```
 
+### Mock Handles
+
+`.respond()`, `.respondWith()`, and `.throw()` return a handle that's compatible with Vitest's spy matchers. Use it to verify that a mock was actually matched during your test.
+
+```ts
+const findUsers = mock
+  .on(db.select().from(schema.users))
+  .respond([{ id: 1, name: "Alice" }]);
+
+const updateUser = mock
+  .on(db.update(schema.users).set({ name: "Bob" }).where(eq(schema.users.id, 1)))
+  .respond({ rowCount: 1 });
+
+await db.select().from(schema.users);
+
+expect(findUsers).toHaveBeenCalled();
+expect(findUsers).toHaveBeenCalledTimes(1);
+expect(updateUser).not.toHaveBeenCalled();
+```
+
+The handle also exposes `.mock.calls` with `[sql, params]` tuples for deeper inspection:
+
+```ts
+const handle = mock
+  .on(db.select().from(schema.users).where(eq(schema.users.id, 1)))
+  .respond([]);
+
+await db.select().from(schema.users).where(eq(schema.users.id, 42));
+
+expect(handle.mock.calls[0][1]).toEqual([42]); // params
+```
+
 ### Call Recording
 
-Every executed query is recorded in `mock.calls`.
+Every executed query is recorded in `mock.calls`, regardless of which mock matched.
 
 ```ts
 mock.on(db.select().from(schema.users)).respond([]);

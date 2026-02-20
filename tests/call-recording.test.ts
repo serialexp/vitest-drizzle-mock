@@ -43,6 +43,82 @@ describe("call recording", () => {
     expect(mock.calls).toHaveLength(1);
   });
 
+  describe("mock handles", () => {
+    it("should return a handle from .respond()", async () => {
+      const handle = mock
+        .on(db.select().from(schema.users))
+        .respond([]);
+
+      expect(handle).not.toHaveBeenCalled();
+
+      await db.select().from(schema.users);
+
+      expect(handle).toHaveBeenCalled();
+      expect(handle).toHaveBeenCalledTimes(1);
+    });
+
+    it("should return a handle from .respondWith()", async () => {
+      const handle = mock
+        .on(db.select().from(schema.users))
+        .respondWith(() => []);
+
+      await db.select().from(schema.users);
+
+      expect(handle).toHaveBeenCalled();
+    });
+
+    it("should return a handle from .throw()", async () => {
+      const handle = mock
+        .on(db.select().from(schema.users))
+        .throw(new Error("DB down"));
+
+      await expect(db.select().from(schema.users)).rejects.toThrow("DB down");
+
+      expect(handle).toHaveBeenCalled();
+    });
+
+    it("should track multiple calls", async () => {
+      const handle = mock
+        .on(db.select().from(schema.users))
+        .respond([]);
+
+      await db.select().from(schema.users);
+      await db.select().from(schema.users);
+      await db.select().from(schema.users);
+
+      expect(handle).toHaveBeenCalledTimes(3);
+    });
+
+    it("should track sql and params in mock.calls", async () => {
+      const handle = mock
+        .on(db.select().from(schema.users).where(eq(schema.users.id, 1)))
+        .respond([]);
+
+      await db
+        .select()
+        .from(schema.users)
+        .where(eq(schema.users.id, 42));
+
+      expect(handle.mock.calls).toHaveLength(1);
+      expect(handle.mock.calls[0][0]).toContain('"users"');
+      expect(handle.mock.calls[0][1]).toEqual([42]);
+    });
+
+    it("should not count calls for unmatched mocks", async () => {
+      const usersHandle = mock
+        .on(db.select().from(schema.users))
+        .respond([]);
+      const postsHandle = mock
+        .on(db.select().from(schema.posts))
+        .respond([]);
+
+      await db.select().from(schema.users);
+
+      expect(usersHandle).toHaveBeenCalledTimes(1);
+      expect(postsHandle).not.toHaveBeenCalled();
+    });
+  });
+
   describe("reset variants", () => {
     it("should clear everything with reset()", async () => {
       mock.on(db.select().from(schema.users)).respond([]);

@@ -1,5 +1,16 @@
 import { MockHandler, normalizeSql } from "./mock-handler.js";
-import type { MockMatcher, RecordedCall } from "./types.js";
+import type { MockHandle, MockMatcher, RecordedCall } from "./types.js";
+
+export function createMockHandle(): MockHandle {
+  const handle = Object.assign(function () {}, {
+    _isMockFunction: true as const,
+    getMockName: () => "mock",
+    mock: {
+      calls: [] as [sql: string, params: unknown[]][],
+    },
+  });
+  return handle;
+}
 
 export interface QueryLike {
   toSQL(): { sql: string; params: unknown[] };
@@ -76,27 +87,34 @@ export class MockBuilder {
     return this;
   }
 
-  respond(data: unknown): void {
+  respond(data: unknown): MockHandle {
+    const handle = createMockHandle();
     const matcher = this.buildMatcher();
     this.handler.register({
       matcher,
       response: { type: "data", data },
       once: this.isOnce,
       consumed: false,
+      handle,
     });
+    return handle;
   }
 
-  respondWith(fn: (sql: string, params: unknown[]) => unknown): void {
+  respondWith(fn: (sql: string, params: unknown[]) => unknown): MockHandle {
+    const handle = createMockHandle();
     const matcher = this.buildMatcher();
     this.handler.register({
       matcher,
       response: { type: "function", fn },
       once: this.isOnce,
       consumed: false,
+      handle,
     });
+    return handle;
   }
 
-  throw(error: Error): void {
+  throw(error: Error): MockHandle {
+    const handle = createMockHandle();
     const matcher = this.buildMatcher();
     this.handler.register({
       matcher,
@@ -104,7 +122,9 @@ export class MockBuilder {
       error,
       once: this.isOnce,
       consumed: false,
+      handle,
     });
+    return handle;
   }
 
   private buildMatcher(): MockMatcher {
