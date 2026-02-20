@@ -3,7 +3,7 @@
 
 import { describe, it, expect, beforeEach } from "vitest";
 import { eq, and } from "drizzle-orm";
-import { anything } from "../src/index.js";
+import { anything, partial } from "../src/index.js";
 import { createTestDb } from "./helpers.js";
 import * as schema from "./schema.js";
 
@@ -148,6 +148,57 @@ describe("structural matching", () => {
 
       expect(result).toEqual({ rowCount: 1 });
     });
+
+    it("should work as the entire .values() argument to match any insert", async () => {
+      mock
+        .on((d) => d.insert(schema.users).values(anything()))
+        .respond({ rowCount: 1 });
+
+      const result = await db
+        .insert(schema.users)
+        .values({ name: "Alice", email: "a@test.com" });
+
+      expect(result).toEqual({ rowCount: 1 });
+    });
+  });
+
+  describe("partial() helper", () => {
+    it("should match insert with only specified column keys", async () => {
+      mock
+        .on((d) => d.insert(schema.users).values(partial({ name: "x" })))
+        .respond({ rowCount: 1 });
+
+      const result = await db
+        .insert(schema.users)
+        .values({ name: "Alice", email: "a@test.com" });
+
+      expect(result).toEqual({ rowCount: 1 });
+    });
+
+    it("should not match when specified columns are missing from actual query", async () => {
+      mock
+        .on((d) =>
+          d.insert(schema.users).values(partial({ name: "x", email: "x" }))
+        )
+        .respond({ rowCount: 1 });
+
+      // Actual only has {name} — missing email
+      await expect(
+        db.insert(schema.users).values({ name: "Alice" } as any)
+      ).rejects.toThrow(/No mock registered/);
+    });
+
+    it("should work with update .set()", async () => {
+      mock
+        .on((d) => d.update(schema.users).set(partial({ name: "x" })))
+        .respond({ rowCount: 1 });
+
+      const result = await db
+        .update(schema.users)
+        .set({ name: "Alice", email: "a@test.com" });
+
+      expect(result).toEqual({ rowCount: 1 });
+    });
   });
 
   describe("specificity", () => {
@@ -216,6 +267,89 @@ describe("structural matching", () => {
 
       const second = await db.update(schema.users).set({ name: "Bob" });
       expect(second).toEqual({ rowCount: 0 });
+    });
+  });
+
+  describe(".respondOnce() chaining", () => {
+    it("should return queued responses in FIFO order", async () => {
+      mock
+        .on((d) => d.update(schema.users).set({ name: "x" }))
+        .respondOnce({ rowCount: 1 })
+        .respondOnce({ rowCount: 2 });
+
+      const first = await db.update(schema.users).set({ name: "Alice" });
+      expect(first).toEqual({ rowCount: 1 });
+
+      const second = await db.update(schema.users).set({ name: "Bob" });
+      expect(second).toEqual({ rowCount: 2 });
+
+      await expect(
+        db.update(schema.users).set({ name: "Charlie" })
+      ).rejects.toThrow(/No mock registered/);
+    });
+
+    it("should fall through to persistent .respond() after queue is exhausted", async () => {
+      mock
+        .on((d) => d.update(schema.users).set({ name: "x" }))
+        .respondOnce({ rowCount: 1 })
+        .respondOnce({ rowCount: 2 })
+        .respond({ rowCount: 0 });
+
+      const first = await db.update(schema.users).set({ name: "Alice" });
+      expect(first).toEqual({ rowCount: 1 });
+
+      const second = await db.update(schema.users).set({ name: "Bob" });
+      expect(second).toEqual({ rowCount: 2 });
+
+      const third = await db.update(schema.users).set({ name: "Charlie" });
+      expect(third).toEqual({ rowCount: 0 });
+
+      const fourth = await db.update(schema.users).set({ name: "Dave" });
+      expect(fourth).toEqual({ rowCount: 0 });
+    });
+
+    it("should track all calls on the shared handle", async () => {
+      const handle = mock
+        .on((d) => d.update(schema.users).set({ name: "x" }))
+        .respondOnce({ rowCount: 1 })
+        .respondOnce({ rowCount: 2 })
+        .respond({ rowCount: 0 });
+
+      await db.update(schema.users).set({ name: "Alice" });
+      await db.update(schema.users).set({ name: "Bob" });
+      await db.update(schema.users).set({ name: "Charlie" });
+
+      expect(handle.mock.calls).toHaveLength(3);
+    });
+
+    it("should work with sql-exact matchers too", async () => {
+      mock
+        .on(db.select().from(schema.users))
+        .respondOnce([{ id: 1, name: "First" }])
+        .respondOnce([{ id: 2, name: "Second" }])
+        .respond([]);
+
+      const first = await db.select().from(schema.users);
+      expect(first).toEqual([{ id: 1, name: "First" }]);
+
+      const second = await db.select().from(schema.users);
+      expect(second).toEqual([{ id: 2, name: "Second" }]);
+
+      const third = await db.select().from(schema.users);
+      expect(third).toEqual([]);
+    });
+
+    it("should expose a handle via .handle()", async () => {
+      const handle = mock
+        .on((d) => d.update(schema.users).set({ name: "x" }))
+        .respondOnce({ rowCount: 1 })
+        .respondOnce({ rowCount: 2 })
+        .handle();
+
+      await db.update(schema.users).set({ name: "Alice" });
+      await db.update(schema.users).set({ name: "Bob" });
+
+      expect(handle.mock.calls).toHaveLength(2);
     });
   });
 

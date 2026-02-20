@@ -2,7 +2,7 @@
 // ABOUTME: Supports both SQL-based matching (via query builders) and structural matching (via callbacks).
 
 import { MockHandler, normalizeSql } from "./mock-handler.js";
-import type { MockHandle, MockMatcher, RecordedCall, SqlFragment } from "./types.js";
+import type { MockEntry, MockHandle, MockMatcher, RecordedCall, SqlFragment } from "./types.js";
 
 export function createMockHandle(): MockHandle {
   const handle = Object.assign(function () {}, {
@@ -189,6 +189,7 @@ export class MockBuilder {
   private isOnce = false;
   private isPartial = false;
   private fragments: SqlFragment[] = [];
+  private registeredEntry?: MockEntry;
 
   constructor(
     private handler: MockHandler,
@@ -228,7 +229,38 @@ export class MockBuilder {
     return this;
   }
 
+  handle(): MockHandle {
+    if (!this.registeredEntry) {
+      throw new Error(".handle() can only be called after .respondOnce()");
+    }
+    return this.registeredEntry.handle;
+  }
+
+  respondOnce(data: unknown): this {
+    if (!this.registeredEntry) {
+      const handle = createMockHandle();
+      const matcher = this.buildMatcher();
+      this.registeredEntry = {
+        matcher,
+        response: { type: "data", data: undefined },
+        responseQueue: [{ type: "data", data }],
+        once: true,
+        consumed: false,
+        handle,
+      };
+      this.handler.register(this.registeredEntry);
+    } else {
+      this.registeredEntry.responseQueue!.push({ type: "data", data });
+    }
+    return this;
+  }
+
   respond(data: unknown): MockHandle {
+    if (this.registeredEntry) {
+      this.registeredEntry.response = { type: "data", data };
+      this.registeredEntry.once = false;
+      return this.registeredEntry.handle;
+    }
     const handle = createMockHandle();
     const matcher = this.buildMatcher();
     this.handler.register({
@@ -242,6 +274,11 @@ export class MockBuilder {
   }
 
   respondWith(fn: (sql: string, params: unknown[]) => unknown): MockHandle {
+    if (this.registeredEntry) {
+      this.registeredEntry.response = { type: "function", fn };
+      this.registeredEntry.once = false;
+      return this.registeredEntry.handle;
+    }
     const handle = createMockHandle();
     const matcher = this.buildMatcher();
     this.handler.register({

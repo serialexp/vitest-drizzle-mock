@@ -37,6 +37,18 @@ export class MockHandler {
     if (bestMatch) {
       const { mock } = bestMatch;
       mock.handle.mock.calls.push([normalizedSql, params]);
+
+      if (mock.responseQueue?.length) {
+        const queued = mock.responseQueue.shift()!;
+        if (mock.responseQueue.length === 0 && mock.once) {
+          mock.consumed = true;
+        }
+        if (queued.type === "function") {
+          return queued.fn(normalizedSql, params);
+        }
+        return queued.data;
+      }
+
       if (mock.once) mock.consumed = true;
       if (mock.error) throw mock.error;
       return this.resolveResponse(mock, normalizedSql, params);

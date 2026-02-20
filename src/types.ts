@@ -36,6 +36,7 @@ export interface MockHandle {
 export interface MockEntry {
   matcher: MockMatcher;
   response: MockResponse;
+  responseQueue?: MockResponse[];
   error?: Error;
   once: boolean;
   consumed: boolean;
