@@ -1,4 +1,4 @@
-import type { MockEntry, MockMatcher, RecordedCall } from "./types.js";
+import type { CapturedConfig, MockEntry, MockMatcher, RecordedCall } from "./types.js";
 
 export class MockHandler {
   private mocks: MockEntry[] = [];
@@ -12,7 +12,7 @@ export class MockHandler {
     this.mocks.push(entry);
   }
 
-  async handle(sql: string, params: unknown[]): Promise<unknown> {
+  async handle(sql: string, params: unknown[], capturedConfig?: CapturedConfig): Promise<unknown> {
     const normalizedSql = normalizeSql(sql);
 
     this.recordedCalls.push({
@@ -26,7 +26,7 @@ export class MockHandler {
     for (let i = this.mocks.length - 1; i >= 0; i--) {
       const mock = this.mocks[i];
       if (mock.consumed) continue;
-      if (this.matches(mock.matcher, normalizedSql, params)) {
+      if (this.matches(mock.matcher, normalizedSql, params, capturedConfig)) {
         const specificity = matcherSpecificity(mock.matcher);
         if (!bestMatch || specificity > bestMatch.specificity) {
           bestMatch = { mock, specificity, index: i };
@@ -55,7 +55,8 @@ export class MockHandler {
   private matches(
     matcher: MockMatcher,
     sql: string,
-    params: unknown[]
+    params: unknown[],
+    capturedConfig?: CapturedConfig
   ): boolean {
     switch (matcher.type) {
       case "sql-exact": {
@@ -87,6 +88,18 @@ export class MockHandler {
         if (!containsMatch) return false;
         if (matcher.params !== undefined) {
           return paramsEqual(matcher.params, params);
+        }
+        return true;
+      }
+      case "structural": {
+        if (!capturedConfig) return false;
+        if (matcher.operation !== capturedConfig.operation) return false;
+        if (matcher.tableName !== capturedConfig.tableName) return false;
+        if (matcher.tableSchema !== capturedConfig.tableSchema) return false;
+        if (matcher.columnKeys) {
+          for (const key of matcher.columnKeys) {
+            if (!capturedConfig.columnKeys.includes(key)) return false;
+          }
         }
         return true;
       }
@@ -136,6 +149,8 @@ function matcherSpecificity(matcher: MockMatcher): number {
       return matcher.params !== undefined ? 5 : 4;
     case "sql-starts-with":
       return matcher.params !== undefined ? 3 : 2;
+    case "structural":
+      return matcher.columnKeys ? 1.5 : 1.25;
     case "sql-pattern":
     case "sql-contains":
       return 1;
@@ -152,5 +167,7 @@ function formatMatcher(matcher: MockMatcher): string {
       return `pattern: ${matcher.pattern}`;
     case "sql-contains":
       return `contains: "${matcher.substring}"`;
+    case "structural":
+      return `structural: ${matcher.operation} on "${matcher.tableName}"${matcher.columnKeys ? ` columns: [${matcher.columnKeys.join(", ")}]` : ""}`;
   }
 }

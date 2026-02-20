@@ -8,7 +8,15 @@ export type MockMatcher =
   | { type: "sql-exact"; sql: string; params?: unknown[] }
   | { type: "sql-starts-with"; sql: string; params?: unknown[] }
   | { type: "sql-pattern"; pattern: RegExp; params?: unknown[] }
-  | { type: "sql-contains"; substring: string; params?: unknown[] };
+  | { type: "sql-contains"; substring: string; params?: unknown[] }
+  | { type: "structural"; operation: string; tableName: string; tableSchema: string | undefined; columnKeys?: string[] };
+
+export interface CapturedConfig {
+  operation: string;
+  tableName: string;
+  tableSchema: string | undefined;
+  columnKeys: string[];
+}
 
 export type MockResponse =
   | { type: "data"; data: unknown }

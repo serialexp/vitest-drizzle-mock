@@ -3,7 +3,7 @@ import { eq, relations } from "drizzle-orm";
 import { pgTable, serial as pgSerial, text as pgText, integer as pgInteger } from "drizzle-orm/pg-core";
 import { mysqlTable, serial as mySerial, varchar, int } from "drizzle-orm/mysql-core";
 import { sqliteTable, integer as sqliteInteger, text as sqliteText } from "drizzle-orm/sqlite-core";
-import { mockDatabase } from "../src/index.js";
+import { mockDatabase, MockController } from "../src/index.js";
 
 // -- PG schemas --
 
@@ -78,7 +78,7 @@ describe("node-postgres driver", async () => {
   const pgSchema = { pgUsers, pgPosts, pgUsersRelations, pgPostsRelations };
 
   let db: ReturnType<typeof drizzle.mock<typeof pgSchema>>;
-  let mock: ReturnType<typeof mockDatabase>;
+  let mock: MockController<typeof db>;
 
   beforeEach(() => {
     db = drizzle.mock({ schema: pgSchema });
@@ -134,6 +134,12 @@ describe("node-postgres driver", async () => {
     expect(mock.calls).toHaveLength(1);
     expect(mock.calls[0].sql).toContain('"users"');
   });
+
+  it("should match structurally via callback", async () => {
+    mock.on(d => d.update(pgUsers).set({ name: "x" })).respond({ rowCount: 1 });
+    const result = await db.update(pgUsers).set({ name: "Updated" }).where(eq(pgUsers.id, 1));
+    expect(result).toEqual({ rowCount: 1 });
+  });
 });
 
 describe("postgres-js driver", async () => {
@@ -141,7 +147,7 @@ describe("postgres-js driver", async () => {
   const pgSchema = { pgUsers, pgPosts, pgUsersRelations, pgPostsRelations };
 
   let db: ReturnType<typeof drizzle.mock<typeof pgSchema>>;
-  let mock: ReturnType<typeof mockDatabase>;
+  let mock: MockController<typeof db>;
 
   beforeEach(() => {
     db = drizzle.mock({ schema: pgSchema });
@@ -177,6 +183,12 @@ describe("postgres-js driver", async () => {
     await db.select().from(pgUsers);
     expect(mock.calls).toHaveLength(1);
   });
+
+  it("should match structurally via callback", async () => {
+    mock.on(d => d.insert(pgUsers).values({ name: "x", email: "x@x.com" })).respond({ rowCount: 1 });
+    const result = await db.insert(pgUsers).values({ name: "Bob", email: "b@test.com" });
+    expect(result).toEqual({ rowCount: 1 });
+  });
 });
 
 // -- MySQL driver --
@@ -186,7 +198,7 @@ describe("mysql2 driver", async () => {
   const mySchema = { myUsers, myPosts, myUsersRelations, myPostsRelations };
 
   let db: ReturnType<typeof drizzle.mock<typeof mySchema>>;
-  let mock: ReturnType<typeof mockDatabase>;
+  let mock: MockController<typeof db>;
 
   beforeEach(() => {
     db = drizzle.mock({ schema: mySchema, mode: "default" });
@@ -236,6 +248,12 @@ describe("mysql2 driver", async () => {
     // MySQL uses backtick quoting
     expect(mock.calls[0].sql).toContain("`users`");
   });
+
+  it("should match structurally via callback", async () => {
+    mock.on(d => d.update(myUsers).set({ name: "x" })).respond({ rowCount: 1 });
+    const result = await db.update(myUsers).set({ name: "Updated" }).where(eq(myUsers.id, 1));
+    expect(result).toEqual({ rowCount: 1 });
+  });
 });
 
 // -- SQLite drivers --
@@ -245,7 +263,7 @@ describe("better-sqlite3 driver", async () => {
   const sqlSchema = { sqlUsers, sqlPosts, sqlUsersRelations, sqlPostsRelations };
 
   let db: ReturnType<typeof drizzle.mock<typeof sqlSchema>>;
-  let mock: ReturnType<typeof mockDatabase>;
+  let mock: MockController<typeof db>;
 
   beforeEach(() => {
     db = drizzle.mock({ schema: sqlSchema });
@@ -313,6 +331,12 @@ describe("better-sqlite3 driver", async () => {
     // SQLite uses double-quote quoting like PG
     expect(mock.calls[0].sql).toContain('"users"');
   });
+
+  it("should match structurally via callback", async () => {
+    mock.on(d => d.delete(sqlUsers)).respond({ rowCount: 1 });
+    const result = await db.delete(sqlUsers).where(eq(sqlUsers.id, 1));
+    expect(result).toEqual({ rowCount: 1 });
+  });
 });
 
 describe("libsql driver", async () => {
@@ -320,7 +344,7 @@ describe("libsql driver", async () => {
   const sqlSchema = { sqlUsers, sqlPosts, sqlUsersRelations, sqlPostsRelations };
 
   let db: ReturnType<typeof drizzle.mock<typeof sqlSchema>>;
-  let mock: ReturnType<typeof mockDatabase>;
+  let mock: MockController<typeof db>;
 
   beforeEach(() => {
     db = drizzle.mock({ schema: sqlSchema });
@@ -355,5 +379,11 @@ describe("libsql driver", async () => {
     mock.on(db.select().from(sqlUsers)).respond([]);
     await db.select().from(sqlUsers);
     expect(mock.calls).toHaveLength(1);
+  });
+
+  it("should match structurally via callback", async () => {
+    mock.on(d => d.select().from(sqlUsers)).respond([{ id: 1, name: "Alice", email: "a@test.com" }]);
+    const result = await db.select().from(sqlUsers).where(eq(sqlUsers.id, 1));
+    expect(result).toEqual([{ id: 1, name: "Alice", email: "a@test.com" }]);
   });
 });

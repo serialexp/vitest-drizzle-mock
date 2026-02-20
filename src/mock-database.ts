@@ -1,16 +1,40 @@
+// ABOUTME: Intercepts a drizzle database instance to route queries through the mock handler.
+// ABOUTME: Wraps dialect build methods to capture query configs for structural matching.
+
 import {
   fillPlaceholders,
   TransactionRollbackError,
 } from "drizzle-orm";
 import { MockHandler } from "./mock-handler.js";
 import { MockController } from "./mock-controller.js";
+import type { CapturedConfig } from "./types.js";
 
 interface Query {
   sql: string;
   params: unknown[];
 }
 
-function createMockPreparedQuery(handler: MockHandler, query: Query) {
+const TableName = Symbol.for("drizzle:Name");
+const TableSchema = Symbol.for("drizzle:Schema");
+
+const operationByBuildMethod: Record<string, string> = {
+  buildUpdateQuery: "update",
+  buildInsertQuery: "insert",
+  buildDeleteQuery: "delete",
+  buildSelectQuery: "select",
+};
+
+function extractColumnKeys(operation: string, config: any): string[] {
+  if (operation === "update" && config.set) {
+    return Object.keys(config.set);
+  }
+  if (operation === "insert" && config.values && Array.isArray(config.values) && config.values.length > 0) {
+    return Object.keys(config.values[0]);
+  }
+  return [];
+}
+
+function createMockPreparedQuery(handler: MockHandler, query: Query, capturedConfig: CapturedConfig | undefined) {
   const pq = {
     joinsNotNullableMap: undefined as Record<string, boolean> | undefined,
 
@@ -21,7 +45,7 @@ function createMockPreparedQuery(handler: MockHandler, query: Query) {
         placeholderValues && Object.keys(placeholderValues).length > 0
           ? fillPlaceholders(query.params, placeholderValues)
           : query.params;
-      return handler.handle(query.sql, params);
+      return handler.handle(query.sql, params, capturedConfig);
     },
 
     setToken() {
@@ -72,19 +96,44 @@ function createMockPreparedQuery(handler: MockHandler, query: Query) {
   return pq;
 }
 
-export function mockDatabase(db: any): MockController {
+export function mockDatabase<TDb>(db: TDb): MockController<TDb> {
   const handler = new MockHandler();
-  const session = db.session;
+  const dbAny = db as any;
+  const session = dbAny.session;
+  const dialect = dbAny.dialect;
+
+  // Capture the config from dialect build methods (synchronous, no race condition)
+  let lastCapturedConfig: CapturedConfig | undefined;
+
+  for (const [method, operation] of Object.entries(operationByBuildMethod)) {
+    if (typeof dialect[method] === "function") {
+      const original = dialect[method].bind(dialect);
+      dialect[method] = (config: any) => {
+        const table = config.table;
+        if (table) {
+          lastCapturedConfig = {
+            operation,
+            tableName: table[TableName],
+            tableSchema: table[TableSchema],
+            columnKeys: extractColumnKeys(operation, config),
+          };
+        }
+        return original(config);
+      };
+    }
+  }
 
   session.prepareQuery = (query: Query) => {
-    return createMockPreparedQuery(handler, query);
+    const config = lastCapturedConfig;
+    lastCapturedConfig = undefined;
+    return createMockPreparedQuery(handler, query, config);
   };
 
   session.transaction = async (
     callback: (tx: any) => Promise<unknown>,
     _config?: unknown
   ) => {
-    const tx = Object.create(db, {
+    const tx = Object.create(dbAny, {
       rollback: {
         value() {
           throw new TransactionRollbackError();
@@ -104,5 +153,5 @@ export function mockDatabase(db: any): MockController {
     }
   };
 
-  return new MockController(handler);
+  return new MockController(handler, db);
 }
