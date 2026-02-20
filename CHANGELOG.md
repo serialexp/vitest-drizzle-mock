@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.4.0 (2026-02-20)
+
+### Features
+
+- add structural query matching via callback-based mock.on()
+- add relational query matching, containingSql, and anything() helper
+
 ## 0.3.0 (2026-02-20)
 
 ### Features
