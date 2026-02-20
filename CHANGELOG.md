@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.5.0 (2026-02-20)
+
+### Features
+
+- add respondOnce chaining, partial() helper, and symbol-tagged anything()
+
 ## 0.4.0 (2026-02-20)
 
 ### Features
