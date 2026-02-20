@@ -62,6 +62,42 @@ describe("user service", () => {
       { id: 1, name: "Alice", email: "alice@test.com" },
     ]);
   });
+
+  it("should create a user", async () => {
+    mock
+      .on(
+        db.insert(schema.users)
+          .values({ name: "Bob", email: "bob@test.com" })
+          .returning()
+      )
+      .respond([{ id: 2, name: "Bob", email: "bob@test.com" }]);
+
+    const result = await db
+      .insert(schema.users)
+      .values({ name: "Bob", email: "bob@test.com" })
+      .returning();
+
+    expect(result).toEqual([
+      { id: 2, name: "Bob", email: "bob@test.com" },
+    ]);
+  });
+
+  it("should update a user", async () => {
+    mock
+      .on(
+        db.update(schema.users)
+          .set({ name: "Alice Updated" })
+          .where(eq(schema.users.id, 1))
+      )
+      .respond({ rowCount: 1 });
+
+    const result = await db
+      .update(schema.users)
+      .set({ name: "Alice Updated" })
+      .where(eq(schema.users.id, 1));
+
+    expect(result).toEqual({ rowCount: 1 });
+  });
 });
 ```
 
@@ -179,6 +215,30 @@ mock
   .throw(new Error("connection refused"));
 ```
 
+#### `.partial()`
+
+Match any query whose SQL starts with the registered query's SQL. This lets you write a single mock that catches queries with additional clauses like `WHERE`, `LIMIT`, `ORDER BY`, etc.
+
+```ts
+// Matches any select from users — with or without where, limit, etc.
+mock
+  .on(db.select().from(schema.users))
+  .partial()
+  .respond([]);
+```
+
+Can be combined with `.withExactParams()`:
+
+```ts
+mock
+  .on(db.select().from(schema.users).where(eq(schema.users.id, 1)))
+  .partial()
+  .withExactParams()
+  .respond([{ id: 1, name: "Alice" }]);
+```
+
+Only works with `.on()` (query builder matchers), not with `.onSql()` or `.onSqlContaining()`.
+
 #### `.withExactParams()`
 
 Require parameters to match exactly (not just the SQL structure).
@@ -269,7 +329,36 @@ All drivers use drizzle's built-in `.mock()` constructor — no real database co
 
 ## How It Works
 
-`mockDatabase()` intercepts the `prepareQuery` method on the drizzle session. When a query is executed, the generated SQL is matched against registered mocks (last registered wins). If no mock matches, an error is thrown with the SQL and a list of registered mocks to help you debug.
+`mockDatabase()` intercepts the `prepareQuery` method on the drizzle session. When a query is executed, the generated SQL is matched against registered mocks. If no mock matches, an error is thrown with the SQL and a list of registered mocks to help you debug.
+
+### Match Resolution
+
+When multiple mocks match a query, the most specific one wins:
+
+| Priority | Matcher | Description |
+|----------|---------|-------------|
+| 1 (highest) | `.on(query).withExactParams()` | Exact SQL + exact params |
+| 2 | `.on(query)` | Exact SQL, any params |
+| 3 | `.on(query).partial().withExactParams()` | SQL prefix + exact params |
+| 4 | `.on(query).partial()` | SQL prefix, any params |
+| 5 (lowest) | `.onSql()` / `.onSqlContaining()` | Regex or substring |
+
+Within the same priority level, the last registered mock wins. This means you can set up broad catch-alls and specific overrides in any order:
+
+```ts
+// These can be registered in any order — the exact mock always wins for id=1
+mock.on(db.select().from(schema.users)).partial().respond([]);
+mock
+  .on(db.select().from(schema.users).where(eq(schema.users.id, 1)))
+  .withExactParams()
+  .respond([{ id: 1, name: "Alice" }]);
+
+await db.select().from(schema.users).where(eq(schema.users.id, 1));
+// → [{ id: 1, name: "Alice" }]  (exact match wins)
+
+await db.select().from(schema.users).where(eq(schema.users.id, 999));
+// → []  (partial catch-all)
+```
 
 ## License
 

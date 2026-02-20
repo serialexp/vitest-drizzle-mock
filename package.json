@@ -40,7 +40,7 @@
     "@types/pg": "^8.16.0",
     "better-sqlite3": "^12.6.2",
     "drizzle-orm": "^0.38.0",
-    "just-release": "^0.8.2",
+    "just-release": "^0.8.5",
     "mysql2": "^3.17.2",
     "pg": "^8.18.0",
     "postgres": "^3.4.8",
