@@ -1,6 +1,7 @@
 // ABOUTME: Provides the public API for registering mock responses on drizzle queries.
 // ABOUTME: Supports both SQL-based matching (via query builders) and structural matching (via callbacks).
 
+import type { Table } from "drizzle-orm";
 import { MockHandler, normalizeSql } from "./mock-handler.js";
 import type { MockEntry, MockHandle, MockMatcher, RecordedCall, SqlFragment } from "./types.js";
 
@@ -140,6 +141,36 @@ export class MockController<TDb = any> {
     }, this.dialect);
   }
 
+  onInsert<TTable extends Table>(table: TTable): MockInsertBuilder<TTable> {
+    return new MockInsertBuilder<TTable>(this.handler, this.structuralMatcherForTable(table, "insert"), this.dialect);
+  }
+
+  onUpdate<TTable extends Table>(table: TTable): MockUpdateBuilder<TTable> {
+    return new MockUpdateBuilder<TTable>(this.handler, this.structuralMatcherForTable(table, "update"), this.dialect);
+  }
+
+  onDelete(table: Table): MockBuilder {
+    return new MockBuilder(this.handler, this.structuralMatcherForTable(table, "delete"), this.dialect);
+  }
+
+  onSelect(table: Table): MockBuilder {
+    return new MockBuilder(this.handler, this.structuralMatcherForTable(table, "select"), this.dialect);
+  }
+
+  onFindFirst(table: Table): MockBuilder {
+    return new MockBuilder(this.handler, this.structuralMatcherForTable(table, "findFirst"), this.dialect);
+  }
+
+  onFindMany(table: Table): MockBuilder {
+    return new MockBuilder(this.handler, this.structuralMatcherForTable(table, "findMany"), this.dialect);
+  }
+
+  private structuralMatcherForTable(table: Table, operation: string): MockMatcher {
+    const tableName: string = (table as any)[TableName];
+    const tableSchema: string | undefined = (table as any)[TableSchema];
+    return { type: "structural", operation, tableName, tableSchema };
+  }
+
   onSql(pattern: RegExp): MockBuilder {
     return new MockBuilder(this.handler, {
       type: "sql-pattern",
@@ -193,7 +224,7 @@ export class MockBuilder {
 
   constructor(
     private handler: MockHandler,
-    private matcher: MockMatcher,
+    protected matcher: MockMatcher,
     private dialect: any,
   ) {}
 
@@ -320,5 +351,23 @@ export class MockBuilder {
       return { type, sql: this.matcher.sql };
     }
     return this.matcher;
+  }
+}
+
+export class MockInsertBuilder<TTable extends Table> extends MockBuilder {
+  values(value: { [K in keyof TTable['$inferInsert']]?: any }): this {
+    if (this.matcher.type === "structural") {
+      this.matcher.columnKeys = Object.keys(value);
+    }
+    return this;
+  }
+}
+
+export class MockUpdateBuilder<TTable extends Table> extends MockBuilder {
+  set(values: { [K in keyof TTable['$inferInsert']]?: any }): this {
+    if (this.matcher.type === "structural") {
+      this.matcher.columnKeys = Object.keys(values);
+    }
+    return this;
   }
 }

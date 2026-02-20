@@ -538,4 +538,170 @@ describe("structural matching", () => {
       );
     });
   });
+
+  describe("convenience methods", () => {
+    describe("onInsert", () => {
+      it("should match any insert on the table", async () => {
+        mock.onInsert(schema.users).respond({ rowCount: 1 });
+
+        const result = await db
+          .insert(schema.users)
+          .values({ name: "Alice", email: "a@test.com" });
+
+        expect(result).toEqual({ rowCount: 1 });
+      });
+
+      it("should match with column constraints via .values()", async () => {
+        mock
+          .onInsert(schema.users)
+          .values({ name: "x" })
+          .respond({ rowCount: 1 });
+
+        const result = await db
+          .insert(schema.users)
+          .values({ name: "Alice", email: "a@test.com" });
+
+        expect(result).toEqual({ rowCount: 1 });
+      });
+
+      it("should not match when specified columns are missing", async () => {
+        mock
+          .onInsert(schema.users)
+          .values({ name: "x", email: "x" })
+          .respond({ rowCount: 1 });
+
+        await expect(
+          db.insert(schema.users).values({ name: "Alice" } as any)
+        ).rejects.toThrow(/No mock registered/);
+      });
+
+      it("should not match a different table", async () => {
+        mock.onInsert(schema.users).respond({ rowCount: 1 });
+
+        await expect(
+          db.insert(schema.posts).values({ title: "Hello", body: "World", authorId: 1 })
+        ).rejects.toThrow(/No mock registered/);
+      });
+    });
+
+    describe("onUpdate", () => {
+      it("should match any update on the table", async () => {
+        mock.onUpdate(schema.users).respond({ rowCount: 1 });
+
+        const result = await db
+          .update(schema.users)
+          .set({ name: "Updated" })
+          .where(eq(schema.users.id, 1));
+
+        expect(result).toEqual({ rowCount: 1 });
+      });
+
+      it("should match with column constraints via .set()", async () => {
+        mock
+          .onUpdate(schema.users)
+          .set({ name: "x" })
+          .respond({ rowCount: 1 });
+
+        const result = await db
+          .update(schema.users)
+          .set({ name: "Updated", email: "new@test.com" })
+          .where(eq(schema.users.id, 1));
+
+        expect(result).toEqual({ rowCount: 1 });
+      });
+    });
+
+    describe("onDelete", () => {
+      it("should match any delete on the table", async () => {
+        mock.onDelete(schema.users).respond({ rowCount: 1 });
+
+        const result = await db
+          .delete(schema.users)
+          .where(eq(schema.users.id, 1));
+
+        expect(result).toEqual({ rowCount: 1 });
+      });
+    });
+
+    describe("onSelect", () => {
+      it("should match any select from the table", async () => {
+        mock.onSelect(schema.users).respond([{ id: 1, name: "Alice" }]);
+
+        const result = await db
+          .select()
+          .from(schema.users)
+          .where(eq(schema.users.id, 1));
+
+        expect(result).toEqual([{ id: 1, name: "Alice" }]);
+      });
+    });
+
+    describe("onFindFirst", () => {
+      it("should match findFirst on the table", async () => {
+        mock
+          .onFindFirst(schema.users)
+          .respond({ id: 1, name: "Alice", email: "a@test.com", createdAt: null });
+
+        const result = await db.query.users.findFirst({
+          where: eq(schema.users.id, 1),
+        });
+
+        expect(result).toEqual({ id: 1, name: "Alice", email: "a@test.com", createdAt: null });
+      });
+
+      it("should not match findMany", async () => {
+        mock.onFindFirst(schema.users).respond({ id: 1, name: "Alice", email: "a@test.com", createdAt: null });
+
+        await expect(db.query.users.findMany()).rejects.toThrow(/No mock registered/);
+      });
+    });
+
+    describe("onFindMany", () => {
+      it("should match findMany on the table", async () => {
+        mock
+          .onFindMany(schema.users)
+          .respond([{ id: 1, name: "Alice", email: "a@test.com", createdAt: null }]);
+
+        const result = await db.query.users.findMany({
+          where: eq(schema.users.id, 1),
+        });
+
+        expect(result).toEqual([{ id: 1, name: "Alice", email: "a@test.com", createdAt: null }]);
+      });
+    });
+
+    describe("chaining with respondOnce", () => {
+      it("should work with respondOnce on convenience methods", async () => {
+        mock
+          .onInsert(schema.users)
+          .respondOnce({ rowCount: 1 })
+          .respondOnce({ rowCount: 2 })
+          .respond({ rowCount: 0 });
+
+        const first = await db.insert(schema.users).values({ name: "A", email: "a@test.com" });
+        expect(first).toEqual({ rowCount: 1 });
+
+        const second = await db.insert(schema.users).values({ name: "B", email: "b@test.com" });
+        expect(second).toEqual({ rowCount: 2 });
+
+        const third = await db.insert(schema.users).values({ name: "C", email: "c@test.com" });
+        expect(third).toEqual({ rowCount: 0 });
+      });
+    });
+
+    describe("containingSql with convenience methods", () => {
+      it("should work with onFindFirst + containingSql", async () => {
+        mock
+          .onFindFirst(schema.users)
+          .containingSql(eq(schema.users.id, 1))
+          .respond({ id: 1, name: "Alice", email: "a@test.com", createdAt: null });
+
+        const result = await db.query.users.findFirst({
+          where: eq(schema.users.id, 1),
+        });
+
+        expect(result).toEqual({ id: 1, name: "Alice", email: "a@test.com", createdAt: null });
+      });
+    });
+  });
 });
